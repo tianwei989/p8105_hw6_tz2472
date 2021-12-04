@@ -1,0 +1,7 @@
+---
+title: "tz2472_hw6"
+author: "tianwei zhao"
+date: "12/3/2021"
+output: github_document
+---
+
