@@ -5,3 +5,273 @@ date: "12/3/2021"
 output: github_document
 ---
 
+```{r}
+library(tidyverse)
+library(modelr)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+scale_colour_discrete = scale_color_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+##  Problem 1
+
+
+```{r}
+birth_weight = 
+  read_csv("birthweight.csv")
+```
+
+
+First, convert appropriate variables to factors
+
+```{r}
+birth_weight =
+  birth_weight %>% 
+  mutate(
+    babysex = recode_factor(babysex, "1" = "male", "2" = "female"),
+    frace = recode_factor(frace, "1" = "White", "2" = "Black", "3" = "Asian", "4" = "Puerto Rican", "8" = "Other", "9" = "Unkown"),
+    mrace = recode_factor(mrace, "1" = "White", "2" = "Black", "3" = "Asian", "4" = "Puerto Rican", "8" = "Other"),
+    malform = recode_factor(malform, "0" = "absent", "1" = "present" )
+  )
+```
+
+
+Summary of the data set before further analysis
+
+```{r}
+skimr::skim(birth_weight) %>% 
+  select(-c(factor.ordered, factor.n_unique, factor.top_counts,numeric.hist)) %>% 
+  knitr::kable()
+```
+
+
+As we can observe from the table, there’s no missing value in the data set. Moreover, pnumlbw and pnumgsa are 0 for all of their observations, therefore those variables should be not used in the regression analysis.
+
+Hypothesized Regression Model
+
+Hypothesize a model using the step-wise approach that we learned in Biostatistical Method I!
+
+Here, I used the step-wise regression function in R. The process is to start with a model using all predictors and then use the backward elimination process to search through models from full to null to find the model with the smallest AIC value.
+
+
+```{r}
+mod_1 = lm(bwt ~ ., data = birth_weight) %>% 
+  step(direction = "backward", trace = 0)
+
+mod_1
+```
+
+So, the first model that I hypothesize with backward elimination include 11 variables. Those variables are babysex,bhead,blength,delwt,fincome, gaweeks,mheight, mrace, parity, ppwt, and smoken.
+
+```{r}
+summary(mod_1) %>% 
+  broom::tidy() %>% 
+  select(term, estimate, p.value) %>%
+  knitr::kable(digits = 3)
+```
+
+Plot of model residuals against fitted values
+
+```{r}
+birth_weight %>% 
+  add_predictions(mod_1) %>% 
+  add_residuals(mod_1) %>%
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) + 
+  geom_smooth(se = FALSE) +
+  labs(x = "Fitted Values", y = "Residuals",title = "Residuals vs Fitted 1")
+```
+
+From the plot, we can see that most of the residuals bounce around 0 in the (-1000,1000) horizontal band. However, there are some concerning points at the lower end of the plot with high residuals.
+
+
+Compare models
+
+```{r}
+mod_2 = lm(bwt ~ blength + gaweeks, data = birth_weight)
+mod_3 = lm(bwt ~ bhead + blength + babysex + 
+             bhead * blength + 
+             bhead * babysex + 
+             blength * babysex + 
+             bhead * blength * babysex, data = birth_weight)
+```
+
+
+Residual vs Fitted plot for the second model
+
+```{r}
+birth_weight %>% 
+  add_predictions(mod_2) %>% 
+  add_residuals(mod_2) %>%
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) + 
+  geom_smooth(se = FALSE) +
+  labs(x = "Fitted Values", y = "Residuals",title = "Residuals vs Fitted 2")
+```
+
+Residual vs Fitted plot for the second model
+
+```{r}
+birth_weight %>% 
+  add_predictions(mod_3) %>% 
+  add_residuals(mod_3) %>%
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) + 
+  geom_smooth(se = FALSE) +
+  labs(x = "Fitted Values", y = "Residuals",title = "Residuals vs Fitted 3")
+```
+
+Cross Validation
+
+```{r}
+cv_df = crossv_mc(birth_weight, 100) 
+
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    mod_1 = map(train, ~lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + mheight + mrace + parity + ppwt + smoken, data = .x)),
+    mod_2 = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    mod_3 = map(train, ~lm(bwt ~ bhead + blength + babysex + 
+               bhead * blength + bhead * babysex + blength * babysex + 
+               bhead * blength * babysex, data = .x))
+  ) %>% 
+  mutate(
+    rmse_mod_1 = map2_dbl(mod_1, test, ~rmse(model = .x, data = .y)),
+    rmse_mod_2 = map2_dbl(mod_2, test, ~rmse(model = .x, data = .y)),
+    rmse_mod_3 = map2_dbl(mod_3, test, ~rmse(model = .x, data = .y)))
+```
+
+
+```{r}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+From the plot, we can see that the first model, the one I hypothesized using the step-wise regression in backward direction, has the smallest RMSE overall. Therefore, the first model is a better fit out of the three models. On the other hand, Model 2, the one with the main effects, has the highest RMSE, which means that it did not the best in fitting the data.
+
+
+
+
+##  Problem 2 
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+Boot Strap
+
+Bootstrap and find the values of r̂2 and $log(\hat{\beta_{0}* \beta_{1}})$ for each strap.
+
+```{r}
+set.seed(1)
+
+boot_straps =
+  weather_df %>% 
+  modelr::bootstrap(n = 5000, id = "strap_id") %>% 
+  mutate(
+    strap = map(strap,as_tibble),
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    results = map(models, broom::tidy),
+    summary = map(models, broom::glance)
+    ) %>% 
+  unnest(c(results,summary),names_repair = "universal")
+
+parameter_est = 
+  boot_straps %>% 
+  select(strap_id, term, estimate, r.squared) %>% 
+  pivot_wider(
+    names_from = "term",
+    values_from = "estimate"
+  ) %>% 
+  rename(
+    r_squared = r.squared,
+    b0 = `(Intercept)`,
+    b1 = tmin
+  ) %>% 
+  mutate(log_product = log(b0 * b1)) %>% 
+  select(-c(b0,b1))
+
+```
+
+Plot the distribution of the interested quantities
+
+r̂2 distribution plot
+
+```{r}
+parameter_est %>%
+  ggplot(aes(x = r_squared)) +
+  geom_density() +
+  labs(
+    title = "Distribution of R^2")
+
+```
+
+
+The r̂2 falls in the range between 0.874, 0.937. From the plot, we can see that r̂2 is roughly normal distributed with a mean of 0.911, and standard deviation 0.009.
+
+2. log(β̂0 * β̂1) distribution plot
+
+```{r}
+parameter_est %>%
+  ggplot(aes(x = log_product)) +
+  geom_density() +
+  labs(
+    x = "log(b0 * b1)",
+    title = "Distribution of log(b0 * b1)")
+
+```
+
+The log(β̂0 * β̂1) falls in the range between 1.922, 2.102.From the plot, we can see that log(β̂0 * β̂1) appears to be normally distributed with a mean of 2.013 and standard deviation 0.024
+
+95% confidence interval for the interested quantities
+
+1. r̂2 95% Confidence Interval
+
+```{r}
+quantile(pull(parameter_est, r_squared), probs = c(0.025,0.975))
+
+```
+
+The 95% confidence of r̂2 is (0.89,0.93)
+
+2. log(β̂0 * β̂1) 95% Confidence Interval
+
+```{r}
+quantile(pull(parameter_est, log_product), probs = c(0.025,0.975))
+
+```
+
+The 95% confidence of log(β̂0 * β̂1) is (1.96,2.06)
